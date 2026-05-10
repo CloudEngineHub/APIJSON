@@ -205,6 +205,15 @@ public class CommonException extends Exception {
         else if (config.isDameng()) {
           db = SQLConfig.DATABASE_DAMENG + " " + dbVersion;
         }
+        else if (config.isKingBaseMySQL()) {
+          db = SQLConfig.DATABASE_KINGBASE_MYSQL + " " + dbVersion;
+        }
+        else if (config.isKingBaseOracle()) {
+          db = SQLConfig.DATABASE_KINGBASE_ORACLE + " " + dbVersion;
+        }
+        else if (config.isKingBaseSQLServer()) {
+          db = SQLConfig.DATABASE_KINGBASE_SQLSERVER + " " + dbVersion;
+        }
         else if (config.isKingBase()) {
           db = SQLConfig.DATABASE_KINGBASE + " " + dbVersion;
         }

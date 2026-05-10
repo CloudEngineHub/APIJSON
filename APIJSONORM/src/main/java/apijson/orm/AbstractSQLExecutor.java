@@ -1237,6 +1237,7 @@ public abstract class AbstractSQLExecutor<T, M extends Map<String, Object>, L ex
 			// TODO 补充各种支持 TYPE_SCROLL_SENSITIVE 和 CONCUR_UPDATABLE 的数据库
             if (config.isMySQL() || config.isTiDB() || config.isMariaDB() || config.isOracle() || config.isSQLServer() || config.isDb2()
 					|| config.isPostgreSQL() || config.isCockroachDB() || config.isOpenGauss() || config.isTimescaleDB() || config.isQuestDB()
+					|| config.isKingBaseMySQL() || config.isKingBaseOracle() || config.isKingBaseSQLServer()
 			) {
                 statement = conn.prepareStatement(sql, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_UPDATABLE);
             } else {

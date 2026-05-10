@@ -154,6 +154,9 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 		DATABASE_LIST.add(DATABASE_COCKROACHDB);
 		DATABASE_LIST.add(DATABASE_DAMENG);
 		DATABASE_LIST.add(DATABASE_KINGBASE);
+		DATABASE_LIST.add(DATABASE_KINGBASE_MYSQL);
+		DATABASE_LIST.add(DATABASE_KINGBASE_ORACLE);
+		DATABASE_LIST.add(DATABASE_KINGBASE_SQLSERVER);
 		DATABASE_LIST.add(DATABASE_ELASTICSEARCH);
 		DATABASE_LIST.add(DATABASE_MANTICORE);
 		DATABASE_LIST.add(DATABASE_CLICKHOUSE);
@@ -1084,11 +1087,11 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 
 	@Override
 	public boolean isTSQL() { // 兼容 TSQL 语法
-		return isOracle() || isSQLServer() || isDb2();
+		return isOracle() || isSQLServer() || isDb2() || isKingBaseOracle() || isKingBaseSQLServer();
 	}
 	@Override
 	public boolean isMSQL() { // 兼容 MySQL 语法，但不一定可以使用它的 JDBC/ODBC
-		return isMySQL() || isTiDB() || isMariaDB() || isSQLite() || isTDengine();
+		return isMySQL() || isTiDB() || isMariaDB() || isSQLite() || isTDengine() || isKingBaseMySQL();
 	}
 	@Override
 	public boolean isPSQL() { // 兼容 PostgreSQL 语法，但不一定可以使用它的 JDBC/ODBC
@@ -1172,7 +1175,31 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 		return isKingBase(gainSQLDatabase());
 	}
 	public static boolean isKingBase(String db) {
-		return DATABASE_KINGBASE.equals(db);
+		return DATABASE_KINGBASE.equals(db) || isKingBaseMySQL(db) || isKingBaseOracle(db) || isKingBaseSQLServer(db);
+	}
+	
+	@Override
+	public boolean isKingBaseMySQL() {
+		return isKingBaseMySQL(gainSQLDatabase());
+	}
+	public static boolean isKingBaseMySQL(String db) {
+		return DATABASE_KINGBASE_MYSQL.equals(db);
+	}
+	
+	@Override
+	public boolean isKingBaseOracle() {
+		return isKingBaseOracle(gainSQLDatabase());
+	}
+	public static boolean isKingBaseOracle(String db) {
+		return DATABASE_KINGBASE_ORACLE.equals(db);
+	}
+	
+	@Override
+	public boolean isKingBaseSQLServer() {
+		return isKingBaseSQLServer(gainSQLDatabase());
+	}
+	public static boolean isKingBaseSQLServer(String db) {
+		return DATABASE_KINGBASE_SQLSERVER.equals(db);
 	}
 
 	@Override
@@ -1389,7 +1416,7 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 		if(isElasticsearch() || isManticore() || isIoTDB() || isSurrealDB()) {
 			return "";
 		}
-		return isMySQL() || isMariaDB() || isTiDB() || isClickHouse() || isTDengine() || isMilvus() || isDoris() || isStarRocks() ? "`" : "\"";
+		return isMySQL() || isMariaDB() || isTiDB() || isClickHouse() || isTDengine() || isMilvus() || isDoris() || isStarRocks() || isKingBaseMySQL() ? "`" : "\"";
 	}
 
 	public String quote(String s) {
@@ -1525,7 +1552,7 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 	}
 
 	public String gainAs() {
-		return isOracle() || isManticore() ? " " : " AS ";
+		return isOracle() || isKingBaseOracle() || isManticore() ? " " : " AS ";
 	}
 
 	@Override
@@ -3074,7 +3101,7 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 		}
 
 		boolean isOracle = isOracle();
-		return gainLimitString(page, count, isTSQL(), isOracle || isDameng() || isKingBase(), isPresto() || isTrino());
+		return gainLimitString(page, count, isTSQL(), isOracle || isDameng() || isKingBaseOracle(), isPresto() || isTrino());
 	}
 	/**获取限制数量及偏移量
 	* @param page
@@ -4305,7 +4332,7 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 		if (isPSQL()) {
 			return gainKey(column) + " ~" + (ignoreCase ? "* " : " ") + gainValue(key, column, value);
 		}
-		if (isOracle() || isDameng() || isKingBase() || (isMySQL() && gainDBVersionNums()[0] >= 8)) {
+		if (isOracle() || isDameng() || isKingBaseOracle() || isKingBaseMySQL() || (isMySQL() && gainDBVersionNums()[0] >= 8)) {
 			return "regexp_like(" + gainKey(column) + ", " + gainValue(key, column, value) + (ignoreCase ? ", 'i'" : ", 'c'") + ")";
 		}
 		if (isPresto() || isTrino()) {
@@ -4624,7 +4651,7 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 					condition += (gainKey(column) + " @> " + gainValue(key, column, newJSONArray(c)));
 					// operator does not exist: jsonb @> character varying  "[" + c + "]");
 				}
-				else if (isOracle() || isDameng() || isKingBase()) {
+				else if (isOracle() || isDameng() || isKingBaseOracle()) {
 					condition += ("json_textcontains(" + gainKey(column) + ", " + (StringUtil.isEmpty(path, true)
 							? "'$'" : gainValue(key, column, path)) + ", " + gainValue(key, column, c == null ? null : c.toString()) + ")");
 				}
@@ -5000,8 +5027,8 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 				cSql = buildWithAsExprSql(config, cSql);
 				return cSql;
 			default:
-				String explain = config.isExplain() ? (config.isSQLServer() ? "SET STATISTICS PROFILE ON  "
-						: (config.isOracle() || config.isDameng() || config.isKingBase() ? "EXPLAIN PLAN FOR " : "EXPLAIN ")) : "";
+				String explain = config.isExplain() ? (config.isSQLServer() || config.isKingBaseSQLServer() ? "SET STATISTICS PROFILE ON  "
+						: (config.isOracle() || config.isDameng() || config.isKingBaseOracle() ? "EXPLAIN PLAN FOR " : "EXPLAIN ")) : "";
 				if (config.isTest() && RequestMethod.isGetMethod(config.getMethod(), true)) {  // FIXME 为啥是 code 而不是 count ？
 					String q = config.getQuote();  // 生成 SELECT  (  (24 >=0 AND 24 <3)  )  AS `code` LIMIT 1 OFFSET 0
 					return explain + "SELECT " + config.gainWhereString(false)
@@ -5010,7 +5037,7 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 
 				config.setPreparedValueList(new ArrayList<Object>());
 				String column = config.gainColumnString();
-				if (config.isOracle() || config.isDameng() || config.isKingBase()) {
+				if (config.isOracle() || config.isDameng() || config.isKingBaseOracle()) {
 					//When config's database is oracle,Using subquery since Oracle12 below does not support OFFSET FETCH paging syntax.
 					//针对oracle分组后条数的统计
 					if (StringUtil.isNotEmpty(config.getGroup(),true) && RequestMethod.isHeadMethod(config.getMethod(), true)){
@@ -5053,7 +5080,7 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 
 	@Override
 	public boolean isWithAsEnable() {
-		return ENABLE_WITH_AS && (isMySQL() == false || gainDBVersionNums()[0] >= 8);
+		return ENABLE_WITH_AS && ((isMySQL() || isKingBaseMySQL()) == false || gainDBVersionNums()[0] >= 8);
 	}
 
 	/**Oracle的分页获取
