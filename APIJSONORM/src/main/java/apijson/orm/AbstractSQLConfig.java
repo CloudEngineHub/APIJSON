@@ -4329,7 +4329,7 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 	 * @return key REGEXP 'value'
 	 */
 	public String gainRegExpString(String key, String column, String value, boolean ignoreCase) {
-		if (isPSQL()) {
+		if (isPSQL() || isKingBaseSQLServer()) {
 			return gainKey(column) + " ~" + (ignoreCase ? "* " : " ") + gainValue(key, column, value);
 		}
 		if (isOracle() || isDameng() || isKingBaseOracle() || isKingBaseMySQL() || (isMySQL() && gainDBVersionNums()[0] >= 8)) {
