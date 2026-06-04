@@ -4651,7 +4651,10 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 					condition += (gainKey(column) + " @> " + gainValue(key, column, newJSONArray(c)));
 					// operator does not exist: jsonb @> character varying  "[" + c + "]");
 				}
-				else if (isOracle() || isDameng() || isKingBaseOracle() || isKingBaseSQLServer()) {
+				else if (isKingBaseSQLServer()) {
+					condition += (gainKey(column) + "::jsonb @> " + gainValue(key, column, newJSONArray(c)) + "::jsonb");
+				}
+				else if (isOracle() || isDameng() || isKingBaseOracle()) {
 					condition += ("json_textcontains(" + gainKey(column) + ", " + (StringUtil.isEmpty(path, true)
 							? "'$'" : gainValue(key, column, path)) + ", " + gainValue(key, column, c == null ? null : c.toString()) + ")");
 				}
