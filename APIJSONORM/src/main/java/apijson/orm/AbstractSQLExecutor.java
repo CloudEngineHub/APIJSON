@@ -17,6 +17,7 @@ import java.time.DayOfWeek;
 import java.time.LocalDateTime;
 import java.time.Month;
 import java.time.Year;
+import java.time.temporal.TemporalAccessor;
 import java.util.Date;
 import java.util.*;
 import java.util.Map.Entry;
@@ -1015,7 +1016,14 @@ public abstract class AbstractSQLExecutor<T, M extends Map<String, Object>, L ex
 	protected boolean isHideColumn(@NotNull SQLConfig<T, M, L> config, @NotNull ResultSet rs, @NotNull ResultSetMetaData rsmd
 			, final int row, @NotNull M table, final int columnIndex, Map<String, M> childMap
 			, Map<String, String> keyMap) throws SQLException {
-		return rsmd.getColumnName(columnIndex).startsWith("_");
+		String columnName = rsmd.getColumnName(columnIndex);
+		// Kingbase Oracle pagination appends ROWNUM as the final RN column. It is
+		// an implementation detail and must not leak into the API response.
+		if (config.isKingBaseOracle() && config.getCount() > 0
+				&& columnIndex == rsmd.getColumnCount() && "RN".equalsIgnoreCase(columnName)) {
+			return true;
+		}
+		return columnName.startsWith("_");
 	}
 
 	/**resultList.put(position, table);
@@ -1078,73 +1086,121 @@ public abstract class AbstractSQLExecutor<T, M extends Map<String, Object>, L ex
 		//				Log.i(TAG, "select  while (rs.next()) { >> for (int i = 0; i < length; i++) {"
 		//						+ "\n  >>> value = " + value);
 
-		boolean castToJson = false;
+		int jdbcType = Types.OTHER;
+		String typeName = null;
+		try {
+			jdbcType = rsmd.getColumnType(columnIndex);
+			typeName = rsmd.getColumnTypeName(columnIndex);
+		}
+		catch (SQLException e) {
+			// Some JDBC bridges do not expose complete metadata. Value-class mapping
+			// still provides a safe fallback in that case.
+			Log.e(TAG, "getValue failed to read JDBC metadata for column " + label + ": " + e.getMessage());
+		}
+		return mapResultValue(config, value, jdbcType, typeName, label);
+	}
 
-		//数据库查出来的null和empty值都有意义，去掉会导致 Moment:{ @column:"content" } 部分无结果及中断数组查询！
-		if (value instanceof Boolean) {
-			//加快判断速度
+	@Override
+	public Object mapResultValue(@NotNull SQLConfig<T, M, L> config, Object value, int jdbcType
+			, String typeName, String label) throws Exception {
+		if (value == null || value instanceof Boolean) {
+			return value;
 		}
-		else if (value instanceof Number) {
-			value = getNumVal((Number) value);
+		if (value instanceof Number) {
+			return getNumVal((Number) value);
 		}
-		else if (value instanceof Timestamp) {
-			value = ((Timestamp) value).toString();
+		if (value instanceof Timestamp || value instanceof Date || value instanceof LocalDateTime) {
+			return value.toString();
 		}
-		else if (value instanceof Date) {  // java.sql.Date 和 java.sql.Time 都继承 java.util.Date
-			value = ((Date) value).toString();
+		if (value instanceof Year) {
+			return ((Year) value).getValue();
 		}
-		else if (value instanceof LocalDateTime) {
-			value = ((LocalDateTime) value).toString();
+		if (value instanceof Month) {
+			return ((Month) value).getValue();
 		}
-		else if (value instanceof Year) {
-			value = ((Year) value).getValue();
+		if (value instanceof DayOfWeek) {
+			return ((DayOfWeek) value).getValue();
 		}
-		else if (value instanceof Month) {
-			value = ((Month) value).getValue();
+		if (value instanceof TemporalAccessor || value instanceof UUID) {
+			return value.toString();
 		}
-		else if (value instanceof DayOfWeek) {
-			value = ((DayOfWeek) value).getValue();
-		}
-		else if (value instanceof String && isJSONType(config, rsmd, columnIndex, label)) { //json String
-			castToJson = true;
-		}
-		else if (value instanceof Blob) { //FIXME 存的是 abcde，取出来直接就是 [97, 98, 99, 100, 101] 这种 byte[] 类型，没有经过以下处理，但最终序列化后又变成了字符串 YWJjZGU=
-			castToJson = true;
+
+		boolean castToJson = isJSONTypeName(typeName);
+		List<String> jsonColumns = config.getJson();
+		castToJson = castToJson || jsonColumns != null && jsonColumns.contains(label);
+
+		if (value instanceof Blob) {
 			value = new String(((Blob) value).getBytes(1, (int) ((Blob) value).length()), "UTF-8");
-		}
-		else if (value instanceof Clob) { //SQL Server TEXT 类型 居然走这个
 			castToJson = true;
-
-			StringBuffer sb = new StringBuffer();
-			BufferedReader br = new BufferedReader(((Clob) value).getCharacterStream());
-			String s = br.readLine();
-			while (s != null) {
-				sb.append(s);
-				s = br.readLine();
-			}
-			value = sb.toString();
-
+		}
+		else if (value instanceof Clob) {
+			value = readClob((Clob) value);
+			castToJson = true;
+		}
+		else if (value instanceof SQLXML) {
+			value = ((SQLXML) value).getString();
+		}
+		else if (value instanceof java.sql.Array) {
+			java.sql.Array sqlArray = (java.sql.Array) value;
 			try {
-				br.close();
+				value = mapArrayValue(config, sqlArray.getArray(), jdbcType, typeName, label);
+			}
+			finally {
+				sqlArray.free();
+			}
+		}
+		else if (value.getClass().isArray() && value instanceof byte[] == false) {
+			value = mapArrayValue(config, value, jdbcType, typeName, label);
+		}
+		else if (config.isKingBase() && isKingBaseJdbcObject(value)) {
+			// Kingbase represents json/jsonb and several extension types as vendor objects.
+			// JSON values are parsed; other extension values are exposed as strings.
+			value = value.toString();
+		}
+
+		if (castToJson && value instanceof String) {
+			try {
+				return JSON.parse(value);
 			}
 			catch (Exception e) {
-				Log.e(TAG, "close BufferedReader failed", e);
+				Log.e(TAG, "mapResultValue failed to parse JSON column " + label + ": " + e.getMessage());
 			}
 		}
-
-		if (castToJson == false) {
-			List<String> json = config.getJson();
-			castToJson = json != null && json.contains(label);
-		}
-		if (castToJson) {
-			try {
-				value = JSON.parse(value);
-			} catch (Exception e) {
-				Log.e(TAG, "getValue  try { value = parseJSON((String) value); } catch (Exception e) { \n" + e.getMessage());
-			}
-		}
-
 		return value;
+	}
+
+	protected boolean isJSONTypeName(String typeName) {
+		return typeName != null && typeName.toLowerCase(Locale.ROOT).contains("json");
+	}
+
+	protected boolean isKingBaseJdbcObject(Object value) {
+		Package pkg = value == null ? null : value.getClass().getPackage();
+		String packageName = pkg == null ? value == null ? "" : value.getClass().getName() : pkg.getName();
+		return packageName.startsWith("com.kingbase8");
+	}
+
+	protected Object mapArrayValue(@NotNull SQLConfig<T, M, L> config, Object array, int jdbcType
+			, String typeName, String label) throws Exception {
+		if (array == null || array.getClass().isArray() == false) {
+			return array;
+		}
+		int length = java.lang.reflect.Array.getLength(array);
+		List<Object> result = new ArrayList<>(length);
+		for (int i = 0; i < length; i++) {
+			result.add(mapResultValue(config, java.lang.reflect.Array.get(array, i), jdbcType, typeName, label));
+		}
+		return result;
+	}
+
+	protected String readClob(Clob clob) throws Exception {
+		StringBuilder sb = new StringBuilder();
+		try (BufferedReader br = new BufferedReader(clob.getCharacterStream())) {
+			String s;
+			while ((s = br.readLine()) != null) {
+				sb.append(s);
+			}
+		}
+		return sb.toString();
 	}
 
 	public Object getNumVal(Number value) {
@@ -1193,9 +1249,7 @@ public abstract class AbstractSQLExecutor<T, M extends Map<String, Object>, L ex
 			//TODO CHAR和JSON类型的字段，getColumnType返回值都是1	，如果不用CHAR，改用VARCHAR，则可以用上面这行来提高性能。
 			//return rsmd.getColumnType(position) == 1;
 
-			if (column.toLowerCase().contains("json")) {
-				return true;
-			}
+			return isJSONTypeName(column);
 		} catch (SQLException e) {
 			Log.e(TAG, "isJsonColumn failed", e);
 		}
@@ -1212,15 +1266,29 @@ public abstract class AbstractSQLExecutor<T, M extends Map<String, Object>, L ex
 
 	@Override
 	public PreparedStatement getStatement(@NotNull SQLConfig<T, M, L> config, String sql) throws Exception {
+		Connection conn = getConnection(config);
+		if (prepareDatabaseGeneratedId(config, conn)) {
+			// The caller may have generated SQL before metadata inspection. Rebuild it
+			// after removing APIJSON's synthetic id from the INSERT.
+			sql = null;
+		}
 		if (StringUtil.isEmpty(sql)) {
 			sql = config.gainSQL(config.isPrepared());
 		}
+		boolean returningGeneratedId = config.getMethod() == RequestMethod.POST
+				&& config.isKingBaseSQLServer() && config.getId() == null;
+		if (returningGeneratedId) {
+			sql += " RETURNING " + config.getQuote() + config.getIdKey() + config.getQuote();
+		}
 
-		Connection conn = getConnection(config);
 		PreparedStatement statement; //创建Statement对象
 		if (config.getMethod() == RequestMethod.POST && config.getId() == null) { //自增id
-			if (config.isOracle()) {
-				// 解决 oracle 使用自增主键 插入获取不到id问题
+			if (returningGeneratedId) {
+				statement = conn.prepareStatement(sql);
+			}
+			else if (config.isOracle() || config.isKingBase()) {
+				// Oracle and Kingbase JDBC require the generated column name; the
+				// RETURN_GENERATED_KEYS flag alone may leave generatedKeys null.
 				String[] generatedColumns = {config.getIdKey()};
 				statement = conn.prepareStatement(sql, generatedColumns);
 			} else {
@@ -1235,9 +1303,11 @@ public abstract class AbstractSQLExecutor<T, M extends Map<String, Object>, L ex
             // }
 
 			// TODO 补充各种支持 TYPE_SCROLL_SENSITIVE 和 CONCUR_UPDATABLE 的数据库
-            if (config.isMySQL() || config.isTiDB() || config.isMariaDB() || config.isOracle() || config.isSQLServer() || config.isDb2()
+			if (config.isKingBase()) {
+				statement = conn.prepareStatement(sql, ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_READ_ONLY);
+			}
+			else if (config.isMySQL() || config.isTiDB() || config.isMariaDB() || config.isOracle() || config.isSQLServer() || config.isDb2()
 					|| config.isPostgreSQL() || config.isCockroachDB() || config.isOpenGauss() || config.isTimescaleDB() || config.isQuestDB()
-					|| config.isKingBaseMySQL() || config.isKingBaseOracle() || config.isKingBaseSQLServer()
 			) {
                 statement = conn.prepareStatement(sql, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_UPDATABLE);
             } else {
@@ -1269,7 +1339,78 @@ public abstract class AbstractSQLExecutor<T, M extends Map<String, Object>, L ex
 		return statement;
 	}
 
+	/**
+	 * Kingbase SQL Server compatibility mode supports true IDENTITY columns. If
+	 * APIJSON supplied its fallback id, inspect the actual column metadata and
+	 * omit that id only when the database declares the column auto-generated.
+	 */
+	protected boolean prepareDatabaseGeneratedId(@NotNull SQLConfig<T, M, L> config, @NotNull Connection conn) throws Exception {
+		if (config.getMethod() != RequestMethod.POST || !config.isKingBaseSQLServer()
+				|| !config.isIdGeneratedByAPIJSON() || config.getId() == null
+				|| !isAutoGeneratedIdColumn(config, conn)) {
+			return false;
+		}
+
+		List<String> columns = config.getColumn();
+		int idIndex = columns == null ? -1 : columns.indexOf(config.getIdKey());
+		if (idIndex < 0) {
+			return false;
+		}
+
+		List<String> newColumns = new ArrayList<>(columns);
+		newColumns.remove(idIndex);
+		config.setColumn(newColumns);
+
+		List<List<Object>> values = config.getValues();
+		if (values != null) {
+			List<List<Object>> newValues = new ArrayList<>(values.size());
+			for (List<Object> row : values) {
+				List<Object> newRow = row == null ? null : new ArrayList<>(row);
+				if (newRow != null && idIndex < newRow.size()) {
+					newRow.remove(idIndex);
+				}
+				newValues.add(newRow);
+			}
+			config.setValues(newValues);
+		}
+
+		config.setId(null);
+		config.setIdGeneratedByAPIJSON(false);
+		return true;
+	}
+
+	protected boolean isAutoGeneratedIdColumn(@NotNull SQLConfig<T, M, L> config, @NotNull Connection conn) throws SQLException {
+		String idKey = config.getIdKey();
+		DatabaseMetaData metadata = conn.getMetaData();
+		try (ResultSet columns = metadata.getColumns(config.gainSQLCatalog(), config.gainSQLSchema(), config.gainSQLTable(), idKey)) {
+			while (columns.next()) {
+				String columnName = columns.getString("COLUMN_NAME");
+				if (idKey.equalsIgnoreCase(columnName)
+						&& ("YES".equalsIgnoreCase(columns.getString("IS_AUTOINCREMENT"))
+						|| "YES".equalsIgnoreCase(columns.getString("IS_GENERATEDCOLUMN")))) {
+					return true;
+				}
+			}
+		}
+
+		// Some Kingbase JDBC versions leave IS_AUTOINCREMENT blank in
+		// DatabaseMetaData but expose it correctly through result metadata.
+		String q = config.getQuote();
+		String schema = config.gainSQLSchema();
+		String tablePath = (StringUtil.isEmpty(schema, true) ? "" : q + schema + q + ".")
+				+ q + config.gainSQLTable() + q;
+		String probeSql = "SELECT " + q + idKey + q + " FROM " + tablePath + " WHERE 1 = 0";
+		try (PreparedStatement probe = conn.prepareStatement(probeSql); ResultSet rs = probe.executeQuery()) {
+			return rs.getMetaData().isAutoIncrement(1);
+		}
+	}
+
 	public PreparedStatement setArgument(@NotNull SQLConfig<T, M, L> config, @NotNull PreparedStatement statement, int index, Object value) throws SQLException {
+		if (config.isKingBase() && value != null
+				&& (value instanceof Map || value instanceof Collection || value.getClass().isArray())) {
+			statement.setObject(index + 1, JSON.toJSONString(value), Types.OTHER);
+			return statement;
+		}
 		//JSON.isBooleanOrNumberOrString(v) 解决 PostgreSQL: Can't infer the SQL type to use for an instance of com.alibaba.fastjson.JSONList
 		if (apijson.JSON.isBoolOrNumOrStr(value)) {
 			statement.setObject(index + 1, value); //PostgreSQL JDBC 不支持隐式类型转换 tinyint = varchar 报错
@@ -1526,7 +1667,22 @@ public abstract class AbstractSQLExecutor<T, M extends Map<String, Object>, L ex
 		}
 		else {
 			stt = getStatement(config);
-			count = ((PreparedStatement) stt).executeUpdate();  // PreparedStatement 不用传 SQL
+			PreparedStatement preparedStatement = (PreparedStatement) stt;
+			if (config.getMethod() == RequestMethod.POST && config.isKingBaseSQLServer() && config.getId() == null) {
+				boolean hasResult = preparedStatement.execute();
+				try (ResultSet rs = hasResult ? preparedStatement.getResultSet() : null) {
+					if (rs != null && rs.next()) {
+						config.setId(rs.getObject(1));
+						count = 1;
+					}
+					else {
+						count = preparedStatement.getUpdateCount();
+					}
+				}
+			}
+			else {
+				count = preparedStatement.executeUpdate();  // PreparedStatement 不用传 SQL
+			}
 		}
 
 		if (count <= 0 && config.isHive()) {

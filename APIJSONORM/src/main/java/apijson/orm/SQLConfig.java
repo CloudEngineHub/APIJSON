@@ -239,6 +239,15 @@ public interface SQLConfig<T, M extends Map<String, Object>, L extends List<Obje
 	Object getId();
 	SQLConfig<T, M, L> setId(Object id);
 
+	/**Whether the current id was supplied by {@link AbstractSQLConfig.IdCallback}, rather than by the request.*/
+	default boolean isIdGeneratedByAPIJSON() {
+		return false;
+	}
+
+	default SQLConfig<T, M, L> setIdGeneratedByAPIJSON(boolean generated) {
+		return this;
+	}
+
 	Object getIdIn();
 	SQLConfig<T, M, L> setIdIn(Object idIn);
 

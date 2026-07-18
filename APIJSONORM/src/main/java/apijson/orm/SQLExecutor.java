@@ -90,6 +90,15 @@ public interface SQLExecutor<T, M extends Map<String, Object>, L extends List<Ob
 	*/
 	boolean isJSONType(@NotNull SQLConfig<T, M, L> config, ResultSetMetaData rsmd, int position, String label);
 
+	/**
+	 * Convert a JDBC value to a JSON-serializable Java value. Database adapters can
+	 * override this hook without replacing the complete result-set traversal.
+	 */
+	default Object mapResultValue(@NotNull SQLConfig<T, M, L> config, Object value, int jdbcType
+			, String typeName, String label) throws Exception {
+		return value;
+	}
+
 
 	Connection getConnection(@NotNull SQLConfig<T, M, L> config) throws Exception;
 	default Statement getStatement(@NotNull SQLConfig<T, M, L> config) throws Exception {
