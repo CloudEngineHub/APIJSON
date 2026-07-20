@@ -1185,7 +1185,7 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 		return isKingBase(gainSQLDatabase());
 	}
 	public static boolean isKingBase(String db) {
-		return DATABASE_KINGBASE.equals(db) || isKingBaseMySQL(db) || isKingBaseOracle(db) || isKingBaseSQLServer(db);
+		return KingbaseSQLDialect.from(db).isKingbase();
 	}
 	
 	@Override
@@ -1193,7 +1193,7 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 		return isKingBaseMySQL(gainSQLDatabase());
 	}
 	public static boolean isKingBaseMySQL(String db) {
-		return DATABASE_KINGBASE_MYSQL.equals(db);
+		return KingbaseSQLDialect.from(db).isMySQL();
 	}
 	
 	@Override
@@ -1201,7 +1201,7 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 		return isKingBaseOracle(gainSQLDatabase());
 	}
 	public static boolean isKingBaseOracle(String db) {
-		return DATABASE_KINGBASE_ORACLE.equals(db);
+		return KingbaseSQLDialect.from(db).isOracle();
 	}
 	
 	@Override
@@ -1209,7 +1209,7 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 		return isKingBaseSQLServer(gainSQLDatabase());
 	}
 	public static boolean isKingBaseSQLServer(String db) {
-		return DATABASE_KINGBASE_SQLSERVER.equals(db);
+		return KingbaseSQLDialect.from(db).isSQLServer();
 	}
 
 	@Override
@@ -1426,7 +1426,11 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 		if(isElasticsearch() || isManticore() || isIoTDB() || isSurrealDB()) {
 			return "";
 		}
-		return isMySQL() || isMariaDB() || isTiDB() || isClickHouse() || isTDengine() || isMilvus() || isDoris() || isStarRocks() || isKingBaseMySQL() ? "`" : "\"";
+		KingbaseSQLDialect kingbaseDialect = KingbaseSQLDialect.from(gainSQLDatabase());
+		if (kingbaseDialect.isKingbase()) {
+			return kingbaseDialect.getIdentifierQuote();
+		}
+		return isMySQL() || isMariaDB() || isTiDB() || isClickHouse() || isTDengine() || isMilvus() || isDoris() || isStarRocks() ? "`" : "\"";
 	}
 
 	public String quote(String s) {
@@ -3110,6 +3114,12 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 			}
 		}
 
+		KingbaseSQLDialect kingbaseDialect = KingbaseSQLDialect.from(gainSQLDatabase());
+		String kingbaseLimit = kingbaseDialect.getSelectLimit(getOffset(page, count), count);
+		if (kingbaseLimit != null) {
+			return kingbaseLimit;
+		}
+
 		boolean isOracle = isOracle();
 		return gainLimitString(page, count, isTSQL(), isOracle || isDameng() || isKingBaseOracle(), isPresto() || isTrino());
 	}
@@ -4662,10 +4672,10 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 					condition += (gainKey(column) + " @> " + gainValue(key, column, newJSONArray(c)));
 					// operator does not exist: jsonb @> character varying  "[" + c + "]");
 				}
-				else if (isKingBase()) {
+				else if (isKingBase() && isKingBaseOracle() == false) {
 					condition += (gainKey(column) + "::jsonb @> " + gainValue(key, column, newJSONArray(c)) + "::jsonb");
 				}
-				else if (isOracle() || isDameng()) {
+				else if (isOracle() || isDameng() || isKingBaseOracle()) {
 					condition += ("json_textcontains(" + gainKey(column) + ", " + (StringUtil.isEmpty(path, true)
 							? "'$'" : gainValue(key, column, path)) + ", " + gainValue(key, column, c == null ? null : c.toString()) + ")");
 				}
@@ -5029,7 +5039,7 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 					return  "ALTER TABLE " +  tablePath + " UPDATE" + config.gainSetString() + config.gainWhereString(true);
 				}
 				cSql =  "UPDATE " + tablePath + config.gainSetString() + config.gainWhereString(true)
-						+ (config.isMySQL() || config.isKingBaseMySQL() ? config.gainLimitString() : "");
+						+ (config.isMySQL() || KingbaseSQLDialect.from(config.gainSQLDatabase()).supportsDmlLimit() ? config.gainLimitString() : "");
 				cSql = buildWithAsExprSql(config, cSql);
 				return cSql;
 			case DELETE:
@@ -5037,12 +5047,15 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 					return  "ALTER TABLE " +  tablePath + " DELETE" + config.gainWhereString(true);
 				}
 				cSql =  "DELETE FROM " + tablePath + config.gainWhereString(true)
-						+ (config.isMySQL() || config.isKingBaseMySQL() ? config.gainLimitString() : "");  // PostgreSQL 不允许 LIMIT
+						+ (config.isMySQL() || KingbaseSQLDialect.from(config.gainSQLDatabase()).supportsDmlLimit() ? config.gainLimitString() : "");  // PostgreSQL 不允许 LIMIT
 				cSql = buildWithAsExprSql(config, cSql);
 				return cSql;
 			default:
-				String explain = config.isExplain() ? (config.isSQLServer() || config.isKingBaseSQLServer() ? "SET STATISTICS PROFILE ON  "
-						: (config.isOracle() || config.isDameng() || config.isKingBaseOracle() ? "EXPLAIN PLAN FOR " : "EXPLAIN ")) : "";
+				KingbaseSQLDialect kingbaseDialect = KingbaseSQLDialect.from(config.gainSQLDatabase());
+				String kingbaseExplain = kingbaseDialect.getExplainPrefix();
+				String explain = config.isExplain() ? (kingbaseExplain != null ? kingbaseExplain
+						: (config.isSQLServer() ? "SET STATISTICS PROFILE ON  "
+						: (config.isOracle() || config.isDameng() ? "EXPLAIN PLAN FOR " : "EXPLAIN "))) : "";
 				if (config.isTest() && RequestMethod.isGetMethod(config.getMethod(), true)) {  // FIXME 为啥是 code 而不是 count ？
 					String q = config.getQuote();  // 生成 SELECT  (  (24 >=0 AND 24 <3)  )  AS `code` LIMIT 1 OFFSET 0
 					return explain + "SELECT " + config.gainWhereString(false)
@@ -5459,11 +5472,11 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 							sql += (first ? ON : AND) + (isNot ? "( " : "") + gainCondition(isNot, arrKeyPath
 									+ " IS NOT NULL AND " + arrKeyPath + " @> " + itemKeyPath) + (isNot ? ") " : "");
 						}
-						else if (isKingBase()) {
+						else if (isKingBase() && isKingBaseOracle() == false) {
 							sql += (first ? ON : AND) + (isNot ? "( " : "") + gainCondition(isNot, arrKeyPath
 									+ " IS NOT NULL AND " + arrKeyPath + "::jsonb @> " + itemKeyPath + "::jsonb") + (isNot ? ") " : "");
 						}
-						else if (isOracle() || isDameng()) {
+						else if (isOracle() || isDameng() || isKingBaseOracle()) {
 							sql += (first ? ON : AND) + (isNot ? "( " : "") + gainCondition(isNot, arrKeyPath
 									+ " IS NOT NULL AND json_textcontains(" + arrKeyPath
 									+ ", '$', " + itemKeyPath + ")") + (isNot ? ") " : "");

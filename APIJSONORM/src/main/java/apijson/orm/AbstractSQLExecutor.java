@@ -9,9 +9,11 @@ import apijson.*;
 import apijson.orm.Join.On;
 import apijson.orm.exception.NotExistException;
 
-import java.io.BufferedReader;
+import java.io.Reader;
+import java.lang.reflect.Method;
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.sql.*;
 import java.time.DayOfWeek;
 import java.time.LocalDateTime;
@@ -1103,6 +1105,15 @@ public abstract class AbstractSQLExecutor<T, M extends Map<String, Object>, L ex
 	@Override
 	public Object mapResultValue(@NotNull SQLConfig<T, M, L> config, Object value, int jdbcType
 			, String typeName, String label) throws Exception {
+		if (config.isKingBaseMySQL()) {
+			return mapKingbaseMySQLResultValue(config, value, jdbcType, typeName, label);
+		}
+		if (config.isKingBaseOracle()) {
+			return mapKingbaseOracleResultValue(config, value, jdbcType, typeName, label);
+		}
+		if (config.isKingBaseSQLServer()) {
+			return mapKingbaseSQLServerResultValue(config, value, jdbcType, typeName, label);
+		}
 		if (value == null || value instanceof Boolean) {
 			return value;
 		}
@@ -1169,8 +1180,268 @@ public abstract class AbstractSQLExecutor<T, M extends Map<String, Object>, L ex
 		return value;
 	}
 
+	/**
+	 * Default KingbaseES Oracle-mode mapping. Kingbase maps Oracle NUMBER to
+	 * numeric, RAW/LONG RAW to bytea, and Oracle LOB/date/JSON types to the
+	 * corresponding Kingbase JDBC values. Keep precision and binary data JSON-safe.
+	 */
+	protected Object mapKingbaseOracleResultValue(@NotNull SQLConfig<T, M, L> config, Object value
+			, int jdbcType, String typeName, String label) throws Exception {
+		if (value == null) {
+			return null;
+		}
+
+		String normalizedType = normalizeJdbcTypeName(typeName);
+		List<String> jsonColumns = config.getJson();
+		boolean json = isJSONTypeName(normalizedType) || jsonColumns != null && jsonColumns.contains(label);
+
+		if (value instanceof java.sql.Array) {
+			java.sql.Array sqlArray = (java.sql.Array) value;
+			try {
+				return mapArrayValue(config, sqlArray.getArray(), jdbcType, normalizedType, label);
+			}
+			finally {
+				sqlArray.free();
+			}
+		}
+		if (value.getClass().isArray() && !(value instanceof byte[])) {
+			return mapArrayValue(config, value, jdbcType, normalizedType, label);
+		}
+
+		if (value instanceof Blob) {
+			Blob blob = (Blob) value;
+			byte[] bytes = blob.getBytes(1, (int) blob.length());
+			value = json ? new String(bytes, StandardCharsets.UTF_8)
+					: Base64.getEncoder().encodeToString(bytes);
+		}
+		else if (value instanceof byte[]) {
+			value = json ? new String((byte[]) value, StandardCharsets.UTF_8)
+					: Base64.getEncoder().encodeToString((byte[]) value);
+		}
+		else if (value instanceof Clob) {
+			value = readClob((Clob) value);
+		}
+		else if (value instanceof SQLXML) {
+			value = ((SQLXML) value).getString();
+		}
+		else if (isKingBaseJdbcObject(value)) {
+			value = getKingbaseJdbcValue(value);
+		}
+
+		if (json && value instanceof String) {
+			try {
+				return JSON.parse(value);
+			}
+			catch (Exception e) {
+				Log.e(TAG, "mapKingbaseOracleResultValue failed to parse JSON column " + label + ": " + e.getMessage());
+				return value;
+			}
+		}
+		if (jdbcType == Types.BOOLEAN || "bool".equals(normalizedType) || "boolean".equals(normalizedType)) {
+			return mapBooleanValue(value);
+		}
+		if (value instanceof Boolean) {
+			return value;
+		}
+		if (value instanceof Number) {
+			return getNumVal((Number) value);
+		}
+		if (value instanceof Timestamp || value instanceof Date || value instanceof TemporalAccessor || value instanceof UUID) {
+			return value.toString();
+		}
+		return value;
+	}
+
+	protected Object mapBooleanValue(Object value) {
+		if (value instanceof Number) {
+			return ((Number) value).intValue() != 0;
+		}
+		if (value instanceof String) {
+			String booleanValue = ((String) value).trim();
+			if ("1".equals(booleanValue) || "t".equalsIgnoreCase(booleanValue) || "true".equalsIgnoreCase(booleanValue)) {
+				return true;
+			}
+			if ("0".equals(booleanValue) || "f".equalsIgnoreCase(booleanValue) || "false".equalsIgnoreCase(booleanValue)) {
+				return false;
+			}
+		}
+		return value;
+	}
+
+	/** Default KingbaseES MySQL-mode DB type to JSON-safe Java type mapping. */
+	protected Object mapKingbaseMySQLResultValue(@NotNull SQLConfig<T, M, L> config, Object value
+			, int jdbcType, String typeName, String label) throws Exception {
+		if (value == null) {
+			return null;
+		}
+
+		String normalizedType = normalizeJdbcTypeName(typeName);
+		List<String> jsonColumns = config.getJson();
+		boolean json = isJSONTypeName(normalizedType) || jsonColumns != null && jsonColumns.contains(label);
+
+		if (value instanceof java.sql.Array) {
+			java.sql.Array sqlArray = (java.sql.Array) value;
+			try {
+				return mapArrayValue(config, sqlArray.getArray(), jdbcType, normalizedType, label);
+			}
+			finally {
+				sqlArray.free();
+			}
+		}
+		if (value.getClass().isArray() && !(value instanceof byte[])) {
+			return mapArrayValue(config, value, jdbcType, normalizedType, label);
+		}
+
+		if (value instanceof Blob) {
+			Blob blob = (Blob) value;
+			byte[] bytes = blob.getBytes(1, (int) blob.length());
+			value = json ? new String(bytes, StandardCharsets.UTF_8)
+					: Base64.getEncoder().encodeToString(bytes);
+		}
+		else if (value instanceof byte[]) {
+			value = json ? new String((byte[]) value, StandardCharsets.UTF_8)
+					: Base64.getEncoder().encodeToString((byte[]) value);
+		}
+		else if (value instanceof Clob) {
+			value = readClob((Clob) value);
+		}
+		else if (value instanceof SQLXML) {
+			value = ((SQLXML) value).getString();
+		}
+		else if (isKingBaseJdbcObject(value)) {
+			value = getKingbaseJdbcValue(value);
+		}
+
+		if (json && value instanceof String) {
+			try {
+				return JSON.parse(value);
+			}
+			catch (Exception e) {
+				Log.e(TAG, "mapKingbaseMySQLResultValue failed to parse JSON column " + label + ": " + e.getMessage());
+				return value;
+			}
+		}
+		if (jdbcType == Types.BOOLEAN || "bool".equals(normalizedType) || "boolean".equals(normalizedType)) {
+			return mapBooleanValue(value);
+		}
+		if (value instanceof Boolean) {
+			return value;
+		}
+		if (value instanceof Number) {
+			return getNumVal((Number) value);
+		}
+		if (value instanceof Year) {
+			return ((Year) value).getValue();
+		}
+		if (value instanceof Timestamp || value instanceof Date || value instanceof TemporalAccessor || value instanceof UUID) {
+			return value.toString();
+		}
+		return value;
+	}
+
+	/**
+	 * Default mapping for KingbaseES SQL Server mode. The mode exposes SQL
+	 * Server-compatible numeric, binary, date/time, JSON/JSONB, XML,
+	 * UNIQUEIDENTIFIER, ROWVERSION and SQL_VARIANT types through the Kingbase
+	 * JDBC driver. Preserve exact decimals, make binary values JSON-safe and
+	 * unwrap vendor objects without adding a compile-time driver dependency.
+	 */
+	protected Object mapKingbaseSQLServerResultValue(@NotNull SQLConfig<T, M, L> config, Object value
+			, int jdbcType, String typeName, String label) throws Exception {
+		if (value == null) {
+			return null;
+		}
+
+		String normalizedType = normalizeJdbcTypeName(typeName);
+		List<String> jsonColumns = config.getJson();
+		boolean json = isJSONTypeName(normalizedType) || jsonColumns != null && jsonColumns.contains(label);
+
+		if (value instanceof java.sql.Array) {
+			java.sql.Array sqlArray = (java.sql.Array) value;
+			try {
+				return mapArrayValue(config, sqlArray.getArray(), jdbcType, normalizedType, label);
+			}
+			finally {
+				sqlArray.free();
+			}
+		}
+		if (value.getClass().isArray() && !(value instanceof byte[])) {
+			return mapArrayValue(config, value, jdbcType, normalizedType, label);
+		}
+
+		if (value instanceof Blob) {
+			Blob blob = (Blob) value;
+			byte[] bytes = blob.getBytes(1, (int) blob.length());
+			value = json ? new String(bytes, StandardCharsets.UTF_8)
+					: Base64.getEncoder().encodeToString(bytes);
+		}
+		else if (value instanceof byte[]) {
+			value = json ? new String((byte[]) value, StandardCharsets.UTF_8)
+					: Base64.getEncoder().encodeToString((byte[]) value);
+		}
+		else if (value instanceof Clob) {
+			value = readClob((Clob) value);
+		}
+		else if (value instanceof SQLXML) {
+			value = ((SQLXML) value).getString();
+		}
+		else if (isKingBaseJdbcObject(value)) {
+			Object unwrapped = getKingbaseJdbcValue(value);
+			if (unwrapped != value) {
+				return mapKingbaseSQLServerResultValue(config, unwrapped, jdbcType, normalizedType, label);
+			}
+		}
+
+		if (json && value instanceof String) {
+			try {
+				return JSON.parse(value);
+			}
+			catch (Exception e) {
+				Log.e(TAG, "mapKingbaseSQLServerResultValue failed to parse JSON column " + label + ": " + e.getMessage());
+				return value;
+			}
+		}
+		if (jdbcType == Types.BOOLEAN || jdbcType == Types.BIT
+				|| "bool".equals(normalizedType) || "boolean".equals(normalizedType) || "bit".equals(normalizedType)) {
+			return mapBooleanValue(value);
+		}
+		if (value instanceof Boolean) {
+			return value;
+		}
+		if (value instanceof Number) {
+			return getNumVal((Number) value);
+		}
+		if (value instanceof Timestamp || value instanceof Date || value instanceof Time
+				|| value instanceof TemporalAccessor || value instanceof UUID) {
+			return value.toString();
+		}
+		return value;
+	}
+
+	protected String normalizeJdbcTypeName(String typeName) {
+		if (typeName == null) {
+			return "";
+		}
+		String normalized = typeName.trim().toLowerCase(Locale.ROOT).replace("`", "").replace("\"", "");
+		int schemaSeparator = normalized.lastIndexOf('.');
+		return schemaSeparator < 0 ? normalized : normalized.substring(schemaSeparator + 1);
+	}
+
+	protected Object getKingbaseJdbcValue(Object value) {
+		try {
+			Method method = value.getClass().getMethod("getValue");
+			return method.invoke(value);
+		}
+		catch (Exception ignored) {
+			return value.toString();
+		}
+	}
+
 	protected boolean isJSONTypeName(String typeName) {
-		return typeName != null && typeName.toLowerCase(Locale.ROOT).contains("json");
+		String normalized = normalizeJdbcTypeName(typeName);
+		return "json".equals(normalized) || "jsonb".equals(normalized)
+				|| "_json".equals(normalized) || "_jsonb".equals(normalized)
+				|| "json[]".equals(normalized) || "jsonb[]".equals(normalized);
 	}
 
 	protected boolean isKingBaseJdbcObject(Object value) {
@@ -1194,10 +1465,13 @@ public abstract class AbstractSQLExecutor<T, M extends Map<String, Object>, L ex
 
 	protected String readClob(Clob clob) throws Exception {
 		StringBuilder sb = new StringBuilder();
-		try (BufferedReader br = new BufferedReader(clob.getCharacterStream())) {
-			String s;
-			while ((s = br.readLine()) != null) {
-				sb.append(s);
+		try (Reader reader = clob.getCharacterStream()) {
+			char[] buffer = new char[4096];
+			int length;
+			while ((length = reader.read(buffer)) >= 0) {
+				if (length > 0) {
+					sb.append(buffer, 0, length);
+				}
 			}
 		}
 		return sb.toString();
@@ -1214,6 +1488,10 @@ public abstract class AbstractSQLExecutor<T, M extends Map<String, Object>, L ex
 
 		if (value instanceof BigDecimal) {
 			return ((BigDecimal) value).toString();
+		}
+		if (value instanceof Double && !Double.isFinite((Double) value)
+				|| value instanceof Float && !Float.isFinite((Float) value)) {
+			return value.toString();
 		}
 
 		double v = value.doubleValue();
@@ -1275,18 +1553,9 @@ public abstract class AbstractSQLExecutor<T, M extends Map<String, Object>, L ex
 		if (StringUtil.isEmpty(sql)) {
 			sql = config.gainSQL(config.isPrepared());
 		}
-		boolean returningGeneratedId = config.getMethod() == RequestMethod.POST
-				&& config.isKingBaseSQLServer() && config.getId() == null;
-		if (returningGeneratedId) {
-			sql += " RETURNING " + config.getQuote() + config.getIdKey() + config.getQuote();
-		}
-
 		PreparedStatement statement; //创建Statement对象
 		if (config.getMethod() == RequestMethod.POST && config.getId() == null) { //自增id
-			if (returningGeneratedId) {
-				statement = conn.prepareStatement(sql);
-			}
-			else if (config.isOracle() || config.isKingBase()) {
+			if (config.isOracle() || config.isKingBase()) {
 				// Oracle and Kingbase JDBC require the generated column name; the
 				// RETURN_GENERATED_KEYS flag alone may leave generatedKeys null.
 				String[] generatedColumns = {config.getIdKey()};
@@ -1304,7 +1573,14 @@ public abstract class AbstractSQLExecutor<T, M extends Map<String, Object>, L ex
 
 			// TODO 补充各种支持 TYPE_SCROLL_SENSITIVE 和 CONCUR_UPDATABLE 的数据库
 			if (config.isKingBase()) {
-				statement = conn.prepareStatement(sql, ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_READ_ONLY);
+				try {
+					statement = conn.prepareStatement(sql, ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_READ_ONLY);
+				}
+				catch (SQLException e) {
+					// Some Kingbase JDBC/server combinations do not support scrollable cursors.
+					Log.e(TAG, "Kingbase scrollable ResultSet unavailable, falling back to forward-only: " + e.getMessage());
+					statement = conn.prepareStatement(sql, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
+				}
 			}
 			else if (config.isMySQL() || config.isTiDB() || config.isMariaDB() || config.isOracle() || config.isSQLServer() || config.isDb2()
 					|| config.isPostgreSQL() || config.isCockroachDB() || config.isOpenGauss() || config.isTimescaleDB() || config.isQuestDB()
@@ -1406,6 +1682,18 @@ public abstract class AbstractSQLExecutor<T, M extends Map<String, Object>, L ex
 	}
 
 	public PreparedStatement setArgument(@NotNull SQLConfig<T, M, L> config, @NotNull PreparedStatement statement, int index, Object value) throws SQLException {
+		if (config.isKingBaseMySQL()) {
+			setKingbaseMySQLArgument(statement, index + 1, value);
+			return statement;
+		}
+		if (config.isKingBaseOracle()) {
+			setKingbaseOracleArgument(statement, index + 1, value);
+			return statement;
+		}
+		if (config.isKingBaseSQLServer()) {
+			setKingbaseSQLServerArgument(statement, index + 1, value);
+			return statement;
+		}
 		if (config.isKingBase() && value != null
 				&& (value instanceof Map || value instanceof Collection || value.getClass().isArray())) {
 			statement.setObject(index + 1, JSON.toJSONString(value), Types.OTHER);
@@ -1419,6 +1707,186 @@ public abstract class AbstractSQLExecutor<T, M extends Map<String, Object>, L ex
 			statement.setString(index + 1, value == null ? null : value.toString()); //MySQL setObject 不支持 JSON 类型
 		}
 		return statement;
+	}
+
+	protected void setKingbaseMySQLArgument(@NotNull PreparedStatement statement, int parameterIndex, Object value) throws SQLException {
+		int jdbcType = Types.OTHER;
+		String typeName = "";
+		try {
+			ParameterMetaData metadata = statement.getParameterMetaData();
+			if (metadata != null) {
+				jdbcType = metadata.getParameterType(parameterIndex);
+				typeName = normalizeJdbcTypeName(metadata.getParameterTypeName(parameterIndex));
+			}
+		}
+		catch (SQLException ignored) {
+			// The driver may not expose parameter metadata until execution.
+		}
+
+		if (value == null) {
+			if (jdbcType == Types.NULL || jdbcType == 0) {
+				statement.setObject(parameterIndex, null);
+			}
+			else {
+				statement.setNull(parameterIndex, jdbcType);
+			}
+			return;
+		}
+		if (value instanceof byte[]) {
+			statement.setBytes(parameterIndex, (byte[]) value);
+			return;
+		}
+		if (value instanceof java.sql.Array) {
+			statement.setArray(parameterIndex, (java.sql.Array) value);
+			return;
+		}
+		if (value instanceof Map || value instanceof Collection || value.getClass().isArray()) {
+			String json = JSON.toJSONString(value);
+			if (isJSONTypeName(typeName) || jdbcType == Types.OTHER) {
+				statement.setObject(parameterIndex, json, Types.OTHER);
+			}
+			else {
+				statement.setString(parameterIndex, json);
+			}
+			return;
+		}
+		if (value instanceof UUID && jdbcType == Types.OTHER) {
+			statement.setObject(parameterIndex, value.toString(), Types.OTHER);
+			return;
+		}
+		statement.setObject(parameterIndex, value);
+	}
+
+	protected void setKingbaseOracleArgument(@NotNull PreparedStatement statement, int parameterIndex, Object value) throws SQLException {
+		int jdbcType = Types.OTHER;
+		String typeName = "";
+		try {
+			ParameterMetaData metadata = statement.getParameterMetaData();
+			if (metadata != null) {
+				jdbcType = metadata.getParameterType(parameterIndex);
+				typeName = normalizeJdbcTypeName(metadata.getParameterTypeName(parameterIndex));
+			}
+		}
+		catch (SQLException ignored) {
+			// Kingbase JDBC may defer parameter metadata until the statement executes.
+		}
+
+		if (value == null) {
+			if (jdbcType == Types.NULL || jdbcType == 0 || jdbcType == Types.OTHER && typeName.isEmpty()) {
+				statement.setObject(parameterIndex, null);
+			}
+			else {
+				statement.setNull(parameterIndex, jdbcType);
+			}
+			return;
+		}
+		if (value instanceof byte[]) {
+			statement.setBytes(parameterIndex, (byte[]) value);
+			return;
+		}
+		if (value instanceof Blob) {
+			statement.setBlob(parameterIndex, (Blob) value);
+			return;
+		}
+		if (value instanceof Clob) {
+			statement.setClob(parameterIndex, (Clob) value);
+			return;
+		}
+		if (value instanceof java.sql.Array) {
+			statement.setArray(parameterIndex, (java.sql.Array) value);
+			return;
+		}
+		if (value instanceof Map || value instanceof Collection || value.getClass().isArray()) {
+			String json = JSON.toJSONString(value);
+			if (isJSONTypeName(typeName) || jdbcType == Types.OTHER) {
+				statement.setObject(parameterIndex, json, Types.OTHER);
+			}
+			else if (jdbcType == Types.CLOB || jdbcType == Types.NCLOB) {
+				statement.setString(parameterIndex, json);
+			}
+			else {
+				statement.setString(parameterIndex, json);
+			}
+			return;
+		}
+		if (value instanceof java.util.Date && !(value instanceof java.sql.Date)
+				&& !(value instanceof Time) && !(value instanceof Timestamp)) {
+			statement.setTimestamp(parameterIndex, new Timestamp(((java.util.Date) value).getTime()));
+			return;
+		}
+		if (value instanceof UUID) {
+			statement.setString(parameterIndex, value.toString());
+			return;
+		}
+		statement.setObject(parameterIndex, value);
+	}
+
+	protected void setKingbaseSQLServerArgument(@NotNull PreparedStatement statement, int parameterIndex, Object value) throws SQLException {
+		int jdbcType = Types.OTHER;
+		String typeName = "";
+		try {
+			ParameterMetaData metadata = statement.getParameterMetaData();
+			if (metadata != null) {
+				jdbcType = metadata.getParameterType(parameterIndex);
+				typeName = normalizeJdbcTypeName(metadata.getParameterTypeName(parameterIndex));
+			}
+		}
+		catch (SQLException ignored) {
+			// Kingbase JDBC may defer parameter metadata until execution.
+		}
+
+		if (value == null) {
+			if (jdbcType == Types.NULL || jdbcType == 0 || jdbcType == Types.OTHER && typeName.isEmpty()) {
+				statement.setObject(parameterIndex, null);
+			}
+			else {
+				statement.setNull(parameterIndex, jdbcType);
+			}
+			return;
+		}
+		if (value instanceof byte[]) {
+			statement.setBytes(parameterIndex, (byte[]) value);
+			return;
+		}
+		if (value instanceof Blob) {
+			statement.setBlob(parameterIndex, (Blob) value);
+			return;
+		}
+		if (value instanceof Clob) {
+			statement.setClob(parameterIndex, (Clob) value);
+			return;
+		}
+		if (value instanceof SQLXML) {
+			statement.setSQLXML(parameterIndex, (SQLXML) value);
+			return;
+		}
+		if (value instanceof java.sql.Array) {
+			statement.setArray(parameterIndex, (java.sql.Array) value);
+			return;
+		}
+		if (value instanceof Map || value instanceof Collection || value.getClass().isArray()) {
+			String serialized = JSON.toJSONString(value);
+			if (isJSONTypeName(typeName) || jdbcType == Types.OTHER) {
+				statement.setObject(parameterIndex, serialized, Types.OTHER);
+			}
+			else if (jdbcType == Types.NCHAR || jdbcType == Types.NVARCHAR || jdbcType == Types.LONGNVARCHAR) {
+				statement.setNString(parameterIndex, serialized);
+			}
+			else {
+				statement.setString(parameterIndex, serialized);
+			}
+			return;
+		}
+		if (value instanceof java.util.Date && !(value instanceof java.sql.Date)
+				&& !(value instanceof Time) && !(value instanceof Timestamp)) {
+			statement.setTimestamp(parameterIndex, new Timestamp(((java.util.Date) value).getTime()));
+			return;
+		}
+		if (value instanceof UUID) {
+			statement.setObject(parameterIndex, value);
+			return;
+		}
+		statement.setObject(parameterIndex, value);
 	}
 
 	protected Map<String, Connection> connectionMap = new HashMap<>();
@@ -1668,15 +2136,19 @@ public abstract class AbstractSQLExecutor<T, M extends Map<String, Object>, L ex
 		else {
 			stt = getStatement(config);
 			PreparedStatement preparedStatement = (PreparedStatement) stt;
-			if (config.getMethod() == RequestMethod.POST && config.isKingBaseSQLServer() && config.getId() == null) {
-				boolean hasResult = preparedStatement.execute();
-				try (ResultSet rs = hasResult ? preparedStatement.getResultSet() : null) {
-					if (rs != null && rs.next()) {
-						config.setId(rs.getObject(1));
-						count = 1;
-					}
-					else {
-						count = preparedStatement.getUpdateCount();
+			if (config.isKingBaseSQLServer() && config.getMethod() == RequestMethod.POST
+					&& config.getId() == null) {
+				// Kingbase SQL Server mode returns IDENTITY as a regular result set named
+				// GENERATED_KEYS. Its executeUpdate() returns -1 and getGeneratedKeys()
+				// raises SQLState 02000 with the V009R001C010 driver.
+				boolean hasResultSet = preparedStatement.execute();
+				count = preparedStatement.getUpdateCount();
+				if (hasResultSet) {
+					try (ResultSet rs = preparedStatement.getResultSet()) {
+						if (rs != null && rs.next()) {
+							config.setId(rs.getLong(1));
+							count = 1;
+						}
 					}
 				}
 			}
@@ -1690,9 +2162,10 @@ public abstract class AbstractSQLExecutor<T, M extends Map<String, Object>, L ex
 		}
 
 		if (config.getId() == null && config.getMethod() == RequestMethod.POST) {  // 自增id
-			ResultSet rs = stt.getGeneratedKeys();
-			if (rs != null && rs.next()) {
-				config.setId(rs.getLong(1));
+			try (ResultSet rs = stt.getGeneratedKeys()) {
+				if (rs != null && rs.next()) {
+					config.setId(rs.getLong(1));
+				}
 			}
 		}
 
