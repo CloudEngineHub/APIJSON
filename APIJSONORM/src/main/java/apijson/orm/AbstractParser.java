@@ -2303,6 +2303,86 @@ public abstract class AbstractParser<T, M extends Map<String, Object>, L extends
 		KEY_METHOD_ENUM_MAP.put(KEY_DELETE, RequestMethod.DELETE);
 	}
 
+	private void parseMethodDirective(String key, RequestMethod keyMethod, @NotNull M request) throws Exception {
+		boolean isPost = KEY_POST.equals(key);
+		Object val = request.get(key);
+		Map<String, Object> obj = val instanceof Map<?, ?> ? JSON.get(request, key) : null;
+		if (obj == null) {
+			if (val instanceof String) {
+				String[] tbls = StringUtil.split((String) val);
+				if (tbls != null && tbls.length > 0) {
+					obj = new LinkedHashMap<String, Object>();
+					for (String tbl : tbls) {
+						if (obj.containsKey(tbl)) {
+							throw new ConflictException(key + ": value 中 " + tbl + " 已经存在，不能重复！");
+						}
+
+						obj.put(tbl, isPost && isTableArray(tbl)
+								? tbl.substring(0, tbl.length() - 2) + ":[]" : "");
+					}
+				}
+			}
+			else {
+				throw new IllegalArgumentException(key + ": value 中 value 类型错误，只能是 String 或 Map<String, Object> {} ！");
+			}
+		}
+
+		Set<Entry<String, Object>> set = obj == null ? new HashSet<>() : obj.entrySet();
+		for (Entry<String, Object> objEntry : set) {
+			String objKey = objEntry == null ? null : objEntry.getKey();
+			if (objKey == null) {
+				continue;
+			}
+
+			Map<String, Object> objAttrMap = new HashMap<>();
+			objAttrMap.put(KEY_METHOD, keyMethod);
+			keyObjectAttributesMap.put(objKey, objAttrMap);
+
+			Object objVal = objEntry.getValue();
+			Map<String, Object> objAttrJson = objVal instanceof Map<?, ?> ? JSON.getMap(obj, objKey) : null;
+			if (objAttrJson == null) {
+				if (objVal instanceof String) {
+					objAttrMap.put(KEY_TAG, "".equals(objVal) ? objKey : objVal);
+				}
+				else {
+					throw new IllegalArgumentException(key + ": { " + objKey + ": value 中 value 类型错误，只能是 String 或 Map<String, Object> {} ！");
+				}
+			}
+			else {
+				boolean hasTag = false;
+				for (Entry<String, Object> entry : objAttrJson.entrySet()) {
+					String objAttrKey = entry == null ? null : entry.getKey();
+					if (objAttrKey == null) {
+						continue;
+					}
+
+					switch (objAttrKey) {
+						case KEY_DATABASE:
+						case KEY_DATASOURCE:
+						case KEY_NAMESPACE:
+						case KEY_CATALOG:
+						case KEY_SCHEMA:
+						case KEY_VERSION:
+						case KEY_ROLE:
+							objAttrMap.put(objAttrKey, entry.getValue());
+							break;
+						case KEY_TAG:
+							hasTag = true;
+							objAttrMap.put(objAttrKey, entry.getValue());
+							break;
+						default:
+							break;
+					}
+				}
+
+				if (hasTag == false) {
+					objAttrMap.put(KEY_TAG, isPost && isTableArray(objKey)
+							? objKey.substring(0, objKey.length() - 2) + ":[]" : objKey);
+				}
+			}
+		}
+	}
+
 	protected M batchVerify(RequestMethod method, String tag, int version, String name, @NotNull M request, int maxUpdateCount, SQLCreator<T, M, L> creator) throws Exception {
 		M correctRequest = JSON.createJSONObject();
 		List<String> removeTmpKeys = new ArrayList<>(); // 请求json里面的临时变量,不需要带入后面的业务中,比如 @post、@get等
@@ -2312,103 +2392,34 @@ public abstract class AbstractParser<T, M extends Map<String, Object>, L extends
 			throw new IllegalArgumentException("JSON 对象格式不正确 ！正确示例例如 \"User\": {}");
 		}
 
+		// 先收集所有显式方法，避免同一请求中方法指令的字段顺序影响对象解析结果。
+		for (String key : reqSet) {
+			RequestMethod keyMethod = KEY_POST.equals(key) ? RequestMethod.POST : KEY_METHOD_ENUM_MAP.get(key);
+			if (keyMethod == null) {
+				continue;
+			}
+
+			removeTmpKeys.add(key);
+			try {
+				parseMethodDirective(key, keyMethod, request);
+			}
+			catch (Exception e) {
+				Log.e(TAG, "parse method directive failed", e);
+				throw e;
+			}
+		}
+
 		for (String key : reqSet) {
 			// key 重复直接抛错(xxx:alias, xxx:alias[])
 			if (correctRequest.containsKey(key) || correctRequest.containsKey(key + KEY_ARRAY)) {
 				throw new IllegalArgumentException("对象名重复,请添加别名区分 ! 重复对象名为: " + key);
 			}
 
-			boolean isPost = KEY_POST.equals(key);
-			// @post、@get 等 RequestMethod
+			if (KEY_POST.equals(key) || KEY_METHOD_ENUM_MAP.containsKey(key)) {
+				continue;
+			}
+
 			try {
-				RequestMethod keyMethod = isPost ? RequestMethod.POST : KEY_METHOD_ENUM_MAP.get(key);
-				if (keyMethod != null) {
-					// 如果不匹配,异常不处理即可
-					removeTmpKeys.add(key);
-
-					Object val = request.get(key);
-					Map<String, Object> obj = val instanceof Map<?, ?> ? JSON.get(request, key) : null;
-					if (obj == null) {
-						if (val instanceof String) {
-							String[] tbls = StringUtil.split((String) val);
-							if (tbls != null && tbls.length > 0) {
-								obj = new LinkedHashMap<String, Object>();
-								for (int i = 0; i < tbls.length; i++) {
-									String tbl = tbls[i];
-									if (obj.containsKey(tbl)) {
-										throw new ConflictException(key + ": value 中 " + tbl + " 已经存在，不能重复！");
-									}
-
-									obj.put(tbl, isPost && isTableArray(tbl)
-											? tbl.substring(0, tbl.length() - 2) + ":[]" : "");
-								}
-							}
-						}
-						else {
-							throw new IllegalArgumentException(key + ": value 中 value 类型错误，只能是 String 或 Map<String, Object> {} ！");
-						}
-					}
-
-					Set<Entry<String, Object>> set = obj == null ? new HashSet<>() : obj.entrySet();
-
-					for (Entry<String, Object> objEntry : set) {
-						String objKey = objEntry == null ? null : objEntry.getKey();
-						if (objKey == null) {
-							continue;
-						}
-
-						Map<String, Object> objAttrMap = new HashMap<>();
-						objAttrMap.put(KEY_METHOD, keyMethod);
-						keyObjectAttributesMap.put(objKey, objAttrMap);
-
-						Object objVal = objEntry.getValue();
-						Map<String, Object> objAttrJson = objVal instanceof Map<?, ?> ? JSON.getMap(obj, objKey) : null;
-						if (objAttrJson == null) {
-							if (objVal instanceof String) {
-								objAttrMap.put(KEY_TAG, "".equals(objVal) ? objKey : objVal);
-							}
-							else {
-								throw new IllegalArgumentException(key + ": { " + objKey + ": value 中 value 类型错误，只能是 String 或 Map<String, Object> {} ！");
-							}
-						}
-						else {
-							Set<Entry<String, Object>> objSet = objAttrJson.entrySet();
-
-							boolean hasTag = false;
-							for (Entry<String, Object> entry : objSet) {
-								String objAttrKey = entry == null ? null : entry.getKey();
-								if (objAttrKey == null) {
-									continue;
-								}
-
-								switch (objAttrKey) {
-									case KEY_DATABASE:
-									case KEY_DATASOURCE:
-									case KEY_NAMESPACE:
-									case KEY_CATALOG:
-									case KEY_SCHEMA:
-									case KEY_VERSION:
-									case KEY_ROLE:
-										objAttrMap.put(objAttrKey, entry.getValue());
-										break;
-									case KEY_TAG:
-										hasTag = true;
-										objAttrMap.put(objAttrKey, entry.getValue());
-										break;
-									default:
-										break;
-								}
-							}
-
-							if (hasTag == false) {
-								objAttrMap.put(KEY_TAG, isPost && isTableArray(objKey)
-										? objKey.substring(0, objKey.length() - 2) + ":[]" : objKey);
-							}
-						}
-					}
-					continue;
-				}
-
 				// 1、非crud,对于没有显式声明操作方法的，直接用 URL(/get, /post 等) 对应的默认操作方法
 				// 2、crud, 没有声明就用 GET
 				// 3、兼容 sql@ Map<String, Object>,设置 GET方法

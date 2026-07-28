@@ -52,6 +52,29 @@ key= Moment[]
    }
 }
 
+同一事务中对同一张表执行删除和批量新增时，需要通过别名保证 key 唯一。`@post`、`@delete` 等方法指令的 value 只能是 String 或 JSONObject，不能使用 JSONArray：
+
+```json
+{
+   "@delete": {
+      "MobilizeTaskInfo:remove": "MobilizeTaskInfo"
+   },
+   "MobilizeTaskInfo:remove": {
+      "id{}": ["09a7a740-1935-469a-ab76-ea1ee1f94ddc"]
+   },
+   "@post": {
+      "MobilizeTaskInfo:add[]": "MobilizeTaskInfo:[]"
+   },
+   "MobilizeTaskInfo:add[]": [
+      {
+         "leading_unit_name": "市交通局",
+         "serial_number": "GD2025-064",
+         "status": 1
+      }
+   ]
+}
+```
+
 对于没有显式声明操作方法的，直接用 URL(/get, /post 等) 对应的默认操作方法
 
 ```
