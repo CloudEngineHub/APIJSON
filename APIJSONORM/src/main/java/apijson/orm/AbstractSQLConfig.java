@@ -154,6 +154,9 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 		DATABASE_LIST.add(DATABASE_COCKROACHDB);
 		DATABASE_LIST.add(DATABASE_DAMENG);
 		DATABASE_LIST.add(DATABASE_KINGBASE);
+		DATABASE_LIST.add(DATABASE_KINGBASE_MYSQL);
+		DATABASE_LIST.add(DATABASE_KINGBASE_ORACLE);
+		DATABASE_LIST.add(DATABASE_KINGBASE_SQLSERVER);
 		DATABASE_LIST.add(DATABASE_ELASTICSEARCH);
 		DATABASE_LIST.add(DATABASE_MANTICORE);
 		DATABASE_LIST.add(DATABASE_CLICKHOUSE);
@@ -894,6 +897,7 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 	private boolean main = true;
 
 	private Object id;  // Table 的 id
+	private boolean idGeneratedByAPIJSON;
 	private Object idIn;  // User Table 的 id IN
 	private Object userId;  // Table 的 userId
 	private Object userIdIn;  // Table 的 userId IN
@@ -1011,6 +1015,15 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 		this.id = id;
 		return this;
 	}
+	@Override
+	public boolean isIdGeneratedByAPIJSON() {
+		return idGeneratedByAPIJSON;
+	}
+	@Override
+	public AbstractSQLConfig<T, M, L> setIdGeneratedByAPIJSON(boolean generated) {
+		this.idGeneratedByAPIJSON = generated;
+		return this;
+	}
 
 	@Override
 	public Object getIdIn() {
@@ -1084,11 +1097,11 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 
 	@Override
 	public boolean isTSQL() { // 兼容 TSQL 语法
-		return isOracle() || isSQLServer() || isDb2();
+		return isOracle() || isSQLServer() || isDb2() || isKingBaseOracle() || isKingBaseSQLServer();
 	}
 	@Override
 	public boolean isMSQL() { // 兼容 MySQL 语法，但不一定可以使用它的 JDBC/ODBC
-		return isMySQL() || isTiDB() || isMariaDB() || isSQLite() || isTDengine();
+		return isMySQL() || isTiDB() || isMariaDB() || isSQLite() || isTDengine() || isKingBaseMySQL();
 	}
 	@Override
 	public boolean isPSQL() { // 兼容 PostgreSQL 语法，但不一定可以使用它的 JDBC/ODBC
@@ -1172,7 +1185,31 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 		return isKingBase(gainSQLDatabase());
 	}
 	public static boolean isKingBase(String db) {
-		return DATABASE_KINGBASE.equals(db);
+		return KingbaseSQLDialect.from(db).isKingbase();
+	}
+	
+	@Override
+	public boolean isKingBaseMySQL() {
+		return isKingBaseMySQL(gainSQLDatabase());
+	}
+	public static boolean isKingBaseMySQL(String db) {
+		return KingbaseSQLDialect.from(db).isMySQL();
+	}
+	
+	@Override
+	public boolean isKingBaseOracle() {
+		return isKingBaseOracle(gainSQLDatabase());
+	}
+	public static boolean isKingBaseOracle(String db) {
+		return KingbaseSQLDialect.from(db).isOracle();
+	}
+	
+	@Override
+	public boolean isKingBaseSQLServer() {
+		return isKingBaseSQLServer(gainSQLDatabase());
+	}
+	public static boolean isKingBaseSQLServer(String db) {
+		return KingbaseSQLDialect.from(db).isSQLServer();
 	}
 
 	@Override
@@ -1389,6 +1426,10 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 		if(isElasticsearch() || isManticore() || isIoTDB() || isSurrealDB()) {
 			return "";
 		}
+		KingbaseSQLDialect kingbaseDialect = KingbaseSQLDialect.from(gainSQLDatabase());
+		if (kingbaseDialect.isKingbase()) {
+			return kingbaseDialect.getIdentifierQuote();
+		}
 		return isMySQL() || isMariaDB() || isTiDB() || isClickHouse() || isTDengine() || isMilvus() || isDoris() || isStarRocks() ? "`" : "\"";
 	}
 
@@ -1525,7 +1566,7 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 	}
 
 	public String gainAs() {
-		return isOracle() || isManticore() ? " " : " AS ";
+		return isOracle() || isKingBaseOracle() || isManticore() ? " " : " AS ";
 	}
 
 	@Override
@@ -2074,7 +2115,7 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 		//			return (hasPrefix ? " ORDER BY " : "") + StringUtil.concat(order, joinOrder, ", ");
 		//		}
 
-		if (getCount() > 0 && (isSQLServer() || isDb2())) {
+		if (getCount() > 0 && (isSQLServer() || isKingBaseSQLServer() || isDb2())) {
 			// Oracle, SQL Server, DB2 的 OFFSET 必须加 ORDER BY.去掉Oracle，Oracle里面没有offset关键字
 
 			//			String[] ss = StringUtil.split(order);
@@ -3073,8 +3114,14 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 			}
 		}
 
+		KingbaseSQLDialect kingbaseDialect = KingbaseSQLDialect.from(gainSQLDatabase());
+		String kingbaseLimit = kingbaseDialect.getSelectLimit(getOffset(page, count), count);
+		if (kingbaseLimit != null) {
+			return kingbaseLimit;
+		}
+
 		boolean isOracle = isOracle();
-		return gainLimitString(page, count, isTSQL(), isOracle || isDameng() || isKingBase(), isPresto() || isTrino());
+		return gainLimitString(page, count, isTSQL(), isOracle || isDameng() || isKingBaseOracle(), isPresto() || isTrino());
 	}
 	/**获取限制数量及偏移量
 	* @param page
@@ -4014,7 +4061,7 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 	public String gainKey(@NotNull String key) {
 		String lenFun = "";
 		if (key.endsWith("[")) {
-			lenFun = isSQLServer() ? "datalength" : "length";
+			lenFun = isSQLServer() || isKingBaseSQLServer() ? "datalength" : "length";
 			key = key.substring(0, key.length() - 1);
 		}
 		else if (key.endsWith("{")) {
@@ -4302,10 +4349,11 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 	 * @return key REGEXP 'value'
 	 */
 	public String gainRegExpString(String key, String column, String value, boolean ignoreCase) {
-		if (isPSQL()) {
+		if (isPSQL() || isKingBaseSQLServer()) {
 			return gainKey(column) + " ~" + (ignoreCase ? "* " : " ") + gainValue(key, column, value);
 		}
-		if (isOracle() || isDameng() || isKingBase() || (isMySQL() && gainDBVersionNums()[0] >= 8)) {
+		if (isOracle() || isDameng() || DATABASE_KINGBASE.equals(gainSQLDatabase())
+				|| isKingBaseOracle() || isKingBaseMySQL() || (isMySQL() && gainDBVersionNums()[0] >= 8)) {
 			return "regexp_like(" + gainKey(column) + ", " + gainValue(key, column, value) + (ignoreCase ? ", 'i'" : ", 'c'") + ")";
 		}
 		if (isPresto() || isTrino()) {
@@ -4624,7 +4672,10 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 					condition += (gainKey(column) + " @> " + gainValue(key, column, newJSONArray(c)));
 					// operator does not exist: jsonb @> character varying  "[" + c + "]");
 				}
-				else if (isOracle() || isDameng() || isKingBase()) {
+				else if (isKingBase() && isKingBaseOracle() == false) {
+					condition += (gainKey(column) + "::jsonb @> " + gainValue(key, column, newJSONArray(c)) + "::jsonb");
+				}
+				else if (isOracle() || isDameng() || isKingBaseOracle()) {
 					condition += ("json_textcontains(" + gainKey(column) + ", " + (StringUtil.isEmpty(path, true)
 							? "'$'" : gainValue(key, column, path)) + ", " + gainValue(key, column, c == null ? null : c.toString()) + ")");
 				}
@@ -4671,7 +4722,7 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 	}
 	private void clearWithAsExprListIfNeed() {
 		// mysql8版本以上,子查询支持with as表达式
-		if(this.isMySQL() && this.gainDBVersionNums()[0] >= 8) {
+		if((this.isMySQL() || this.isKingBaseMySQL()) && this.gainDBVersionNums()[0] >= 8) {
 			this.withAsExprSQLList = new ArrayList<>();
 		}
 	}
@@ -4725,7 +4776,7 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 		} else {
 			withAsExpreSql = cfg.gainSQL(isPrepared());
 			// mysql 才存在这个问题, 主表和子表是一张表
-			if (isWithAsEnable && isMySQL() && StringUtil.equals(getTable(), subquery.gainFrom())) {
+			if (isWithAsEnable && (isMySQL() || isKingBaseMySQL()) && StringUtil.equals(getTable(), subquery.gainFrom())) {
 				withAsExpreSql = " SELECT * FROM (" + withAsExpreSql + ")" + as + quote + subquery.gainKey() + quote;
 			}
 		}
@@ -4988,7 +5039,7 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 					return  "ALTER TABLE " +  tablePath + " UPDATE" + config.gainSetString() + config.gainWhereString(true);
 				}
 				cSql =  "UPDATE " + tablePath + config.gainSetString() + config.gainWhereString(true)
-						+ (config.isMySQL() ? config.gainLimitString() : "");
+						+ (config.isMySQL() || KingbaseSQLDialect.from(config.gainSQLDatabase()).supportsDmlLimit() ? config.gainLimitString() : "");
 				cSql = buildWithAsExprSql(config, cSql);
 				return cSql;
 			case DELETE:
@@ -4996,12 +5047,15 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 					return  "ALTER TABLE " +  tablePath + " DELETE" + config.gainWhereString(true);
 				}
 				cSql =  "DELETE FROM " + tablePath + config.gainWhereString(true)
-						+ (config.isMySQL() ? config.gainLimitString() : "");  // PostgreSQL 不允许 LIMIT
+						+ (config.isMySQL() || KingbaseSQLDialect.from(config.gainSQLDatabase()).supportsDmlLimit() ? config.gainLimitString() : "");  // PostgreSQL 不允许 LIMIT
 				cSql = buildWithAsExprSql(config, cSql);
 				return cSql;
 			default:
-				String explain = config.isExplain() ? (config.isSQLServer() ? "SET STATISTICS PROFILE ON  "
-						: (config.isOracle() || config.isDameng() || config.isKingBase() ? "EXPLAIN PLAN FOR " : "EXPLAIN ")) : "";
+				KingbaseSQLDialect kingbaseDialect = KingbaseSQLDialect.from(config.gainSQLDatabase());
+				String kingbaseExplain = kingbaseDialect.getExplainPrefix();
+				String explain = config.isExplain() ? (kingbaseExplain != null ? kingbaseExplain
+						: (config.isSQLServer() ? "SET STATISTICS PROFILE ON  "
+						: (config.isOracle() || config.isDameng() ? "EXPLAIN PLAN FOR " : "EXPLAIN "))) : "";
 				if (config.isTest() && RequestMethod.isGetMethod(config.getMethod(), true)) {  // FIXME 为啥是 code 而不是 count ？
 					String q = config.getQuote();  // 生成 SELECT  (  (24 >=0 AND 24 <3)  )  AS `code` LIMIT 1 OFFSET 0
 					return explain + "SELECT " + config.gainWhereString(false)
@@ -5010,7 +5064,7 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 
 				config.setPreparedValueList(new ArrayList<Object>());
 				String column = config.gainColumnString();
-				if (config.isOracle() || config.isDameng() || config.isKingBase()) {
+				if (config.isOracle() || config.isDameng() || config.isKingBaseOracle()) {
 					//When config's database is oracle,Using subquery since Oracle12 below does not support OFFSET FETCH paging syntax.
 					//针对oracle分组后条数的统计
 					if (StringUtil.isNotEmpty(config.getGroup(),true) && RequestMethod.isHeadMethod(config.getMethod(), true)){
@@ -5053,7 +5107,7 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 
 	@Override
 	public boolean isWithAsEnable() {
-		return ENABLE_WITH_AS && (isMySQL() == false || gainDBVersionNums()[0] >= 8);
+		return ENABLE_WITH_AS && ((isMySQL() || isKingBaseMySQL()) == false || gainDBVersionNums()[0] >= 8);
 	}
 
 	/**Oracle的分页获取
@@ -5358,7 +5412,11 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 						if (isPSQL()) {
 							sql += (first ? ON : AND) + lk + (isNot ? NOT : "") + " ~" + (ignoreCase ? "* " : " ") + rk;
 						}
-						else if (isOracle() || isDameng() || isKingBase()) {
+						else if (isKingBaseSQLServer()) {
+							sql += (first ? ON : AND) + lk + (isNot ? NOT : "") + " ~" + (ignoreCase ? "* " : " ") + rk;
+						}
+						else if (isOracle() || isDameng() || DATABASE_KINGBASE.equals(gainSQLDatabase())
+								|| isKingBaseOracle() || isKingBaseMySQL()) {
 							sql += (first ? ON : AND) + "regexp_like(" +  lk + ", " + rk + (ignoreCase ? ", 'i'" : ", 'c'") + ")";
 						}
 						else if (isPresto() || isTrino()) {
@@ -5414,7 +5472,11 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 							sql += (first ? ON : AND) + (isNot ? "( " : "") + gainCondition(isNot, arrKeyPath
 									+ " IS NOT NULL AND " + arrKeyPath + " @> " + itemKeyPath) + (isNot ? ") " : "");
 						}
-						else if (isOracle() || isDameng() || isKingBase()) {
+						else if (isKingBase() && isKingBaseOracle() == false) {
+							sql += (first ? ON : AND) + (isNot ? "( " : "") + gainCondition(isNot, arrKeyPath
+									+ " IS NOT NULL AND " + arrKeyPath + "::jsonb @> " + itemKeyPath + "::jsonb") + (isNot ? ") " : "");
+						}
+						else if (isOracle() || isDameng() || isKingBaseOracle()) {
 							sql += (first ? ON : AND) + (isNot ? "( " : "") + gainCondition(isNot, arrKeyPath
 									+ " IS NOT NULL AND json_textcontains(" + arrKeyPath
 									+ ", '$', " + itemKeyPath + ")") + (isNot ? ") " : "");
@@ -5545,8 +5607,10 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 		}
 
 		Object id = request.get(idKey);
+		boolean idGeneratedByAPIJSON = false;
 		if (id == null && method == POST) {
 			id = callback.newId(method, database, datasource, namespace, catalog, schema, table); // null 表示数据库自增 id
+			idGeneratedByAPIJSON = id != null;
 		}
 
 		if (id != null) { // null 无效
@@ -6177,6 +6241,7 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 
 			config.setRole(role);
 			config.setId(id);
+			config.setIdGeneratedByAPIJSON(idGeneratedByAPIJSON);
 			config.setIdIn(idIn);
 			config.setUserId(userId);
 			config.setUserIdIn(userIdIn);

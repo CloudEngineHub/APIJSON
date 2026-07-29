@@ -27,6 +27,9 @@ public interface SQLConfig<T, M extends Map<String, Object>, L extends List<Obje
 	String DATABASE_COCKROACHDB = "COCKROACHDB"; // https://www.cockroachlabs.com
 	String DATABASE_DAMENG = "DAMENG"; // https://www.dameng.com
 	String DATABASE_KINGBASE = "KINGBASE"; // https://www.kingbase.com.cn
+	String DATABASE_KINGBASE_MYSQL = "KINGBASE-MYSQL"; // Kingbase in MySQL compatibility mode
+	String DATABASE_KINGBASE_ORACLE = "KINGBASE-ORACLE"; // Kingbase in Oracle compatibility mode
+	String DATABASE_KINGBASE_SQLSERVER = "KINGBASE-SQLSERVER"; // Kingbase in SQL Server compatibility mode
 	String DATABASE_ELASTICSEARCH = "ELASTICSEARCH"; // https://www.elastic.co/guide/en/elasticsearch/reference/7.4/xpack-sql.html
 	String DATABASE_MANTICORE = "MANTICORE"; // https://manticoresearch.com
 	String DATABASE_CLICKHOUSE = "CLICKHOUSE"; // https://clickhouse.com
@@ -95,6 +98,9 @@ public interface SQLConfig<T, M extends Map<String, Object>, L extends List<Obje
 	boolean isCockroachDB();
 	boolean isDameng();
 	boolean isKingBase();
+	boolean isKingBaseMySQL();
+	boolean isKingBaseOracle();
+	boolean isKingBaseSQLServer();
 	boolean isElasticsearch();
 	boolean isManticore();
 	boolean isClickHouse();
@@ -232,6 +238,15 @@ public interface SQLConfig<T, M extends Map<String, Object>, L extends List<Obje
 
 	Object getId();
 	SQLConfig<T, M, L> setId(Object id);
+
+	/**Whether the current id was supplied by {@link AbstractSQLConfig.IdCallback}, rather than by the request.*/
+	default boolean isIdGeneratedByAPIJSON() {
+		return false;
+	}
+
+	default SQLConfig<T, M, L> setIdGeneratedByAPIJSON(boolean generated) {
+		return this;
+	}
 
 	Object getIdIn();
 	SQLConfig<T, M, L> setIdIn(Object idIn);
