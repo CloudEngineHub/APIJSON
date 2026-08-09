@@ -75,6 +75,15 @@
 - [GeXin97](https://github.com/GeXin97)
 - [yunjiao-source](https://github.com/yunjiao-source)(还开源了 [apijson-spring-boot](https://gitee.com/yunjiao-source/apijson-spring-boot))
 - [moxixi527](https://github.com/moxixi527)(热门技术博主)
+- [wu-sv](https://github.com/wu-sv)
+- [Qiaochu Hu](https://github.com/hobostay?tab=overview&from=2026-06-01&to=2026-06-30)
+- [quan](https://github.com/yuanq20)(腾讯工程师)
+- [Nguyen Van Nam](https://github.com/Nam0101)(HUST)
+- [Zhengcy05](https://github.com/Zhengcy05)
+- [014-code](https://github.com/014-code)(东信时代、用友、福州市榕智 工程师)
+- [Ziran Fu](https://github.com/fuziran)
+- [xiaoaozz](https://github.com/xiaoaozz)
+
 
 #### 其中特别致谢: <br/>
 cloudAndMonkey 提交的 11 个 Commits, 对 APIJSON 做出了 1,496 增加和 845 处删减(截止 2022/12/15 日)； <br/>
