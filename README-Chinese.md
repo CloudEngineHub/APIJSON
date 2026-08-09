@@ -675,6 +675,8 @@ Issue/问卷 一般解答顺序：贡献者 > 帮助他人的用户 > 提供任�
 
 [APIJSONServer](https://github.com/cyber2jie/APIJSONServer) 基于APIJSON实现的数据服务端
 
+[BankTransferNetwork](https://gitee.com/guxurui2024/BankTransferNetwork) 基于 APIJSON + Spark + Kafka 构建的金融交易网络风险图谱分析系统
+
 感谢热心的作者们的贡献，点亮 ⭐ Star 收藏/支持下他们吧~
 
   
