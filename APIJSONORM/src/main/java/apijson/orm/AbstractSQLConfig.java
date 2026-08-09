@@ -86,6 +86,7 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 	 * 表名映射，隐藏真实表名，对安全要求很高的表可以这么做
 	 */
 	public static Map<String, String> TABLE_KEY_MAP;
+	public static Map<String, String> UPSERT_TABLE_MAP;
 	/**
 	 * 字段名映射，隐藏真实字段名，对安全要求很高的表可以这么做，另外可以配置 name_tag:(name,tag) 来实现多字段 IN，length_tag:length(tag) 来实现 SQL 函数复杂条件
 	 */
@@ -134,6 +135,8 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 		TABLE_KEY_MAP.put(AllColumn.class.getSimpleName(), AllColumn.TABLE_NAME);
 		TABLE_KEY_MAP.put(AllTableComment.class.getSimpleName(), AllTableComment.TABLE_NAME);
 		TABLE_KEY_MAP.put(AllColumnComment.class.getSimpleName(), AllColumnComment.TABLE_NAME);
+
+		UPSERT_TABLE_MAP = new HashMap<>();
 
 		ALLOW_PARTIAL_UPDATE_FAIL_TABLE_MAP = new HashMap<>();
 
@@ -5004,13 +5007,13 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 		// TODO procedure 改为 List<Procedure>  procedureList; behind : true; function: callFunction(); String key; ...
 		// for (...) { Call procedure1();\n SQL \n; Call procedure2(); ... }
 		// 貌似不需要，因为 ObjectParser<T, M, L> 里就已经处理的顺序等，只是这里要解决下 Schema 问题。
-
+		String table = config.getTable();
 		String procedure = config.getProcedure();
 		if (StringUtil.isNotEmpty(procedure, true)) {
 			int ind = procedure.indexOf(".");
 			boolean hasPrefix = ind >= 0 && ind < procedure.indexOf("(");
 			String sch = hasPrefix ? AbstractFunctionParser.extractSchema(
-					procedure.substring(0, ind), config.getTable()
+					procedure.substring(0, ind), table
 			) : config.gainSQLSchema();
 
 			String q = config.getQuote();
@@ -5030,10 +5033,22 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 			method = GET;
 		}
 
-		String cSql = null;
+		String cSql;
 		switch (method) {
 			case POST:
-				return "INSERT INTO " + tablePath + config.gainColumnString() + " VALUES" + config.getValuesString();
+				String s = UPSERT_TABLE_MAP.get(table);
+				// 暂不支持，UNIQUE KEY 应该比较固定不会频繁改动，而且改了也是同步改后端配置，和前端传参关系不大
+				// Object obj = UPSERT_TABLE_MAP.get(table);
+				// if (obj instanceof String) {
+				//	 s += obj;
+				// } else if (obj instanceof Map<?, ?>) { // { "a+": 1, "b-": 1 }
+				//	 Map<String, Object> setObj = (Map<String, Object>) obj;
+				// 	 AbstractSQLConfig<T, M, L> cfg = gainParser().createSQLConfig();
+				// 	 s = cfg.gainSetString();
+				// }
+
+				return "INSERT INTO " + tablePath + config.gainColumnString() + " VALUES" + config.getValuesString()
+						+ (StringUtil.isEmpty(s) ? "" : " ON DUPLICATE KEY UPDATE " + s);
 			case PUT:
 				if(config.isClickHouse()){
 					return  "ALTER TABLE " +  tablePath + " UPDATE" + config.gainSetString() + config.gainWhereString(true);
