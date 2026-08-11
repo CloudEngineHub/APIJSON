@@ -1769,7 +1769,8 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 						+ "预编译模式下 @having:\"column?value;function(arg0,arg1,...)?value...\""
 						+ " 中 column?value 必须符合正则表达式 " + PATTERN_FUNCTION + " 且不包含连续减号 -- ！不允许空格！");
 			}
-			return expression;
+			
+			return parseSQLExpression(KEY_HAVING, expression, containRaw, false, null);
 		}
 
 		int end = expression.lastIndexOf(")");
@@ -2628,7 +2629,7 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 				}
 
 				// 获取前半部分函数的参数解析   fun(arg0,agr1)
-				String agrsString1[] = parseArgsSplitWithComma(
+				String[] args = parseArgsSplitWithComma(
 						s1.substring(index1 + 1, s1.lastIndexOf(")")), false, containRaw, allowAlias
 				);
 
@@ -2652,9 +2653,9 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 				}
 
 				// 获取后半部分的参数解析 (agr0 agr1 ...)
-				String[] argsString2 = parseArgsSplitWithComma(argString2, false, containRaw, allowAlias);
-				expression = fun + "(" + StringUtil.get(agrsString1) + (containOver ? ") OVER (" : ") AGAINST (")
-						+ StringUtil.get(argsString2) + ")" + suffix  // 传参不传空格，拼接带空格
+				String[] args2 = parseArgsSplitWithComma(argString2, false, containRaw, allowAlias);
+				expression = fun + "(" + StringUtil.get(args) + (containOver ? ") OVER (" : ") AGAINST (")
+						+ StringUtil.get(args2) + ")" + suffix  // 传参不传空格，拼接带空格
 						+ (StringUtil.isEmpty(alias, true) ? "" : gainAs() + quote + alias + quote);
 			}
 		}
@@ -5287,20 +5288,21 @@ public abstract class AbstractSQLConfig<T, M extends Map<String, Object>, L exte
 		String where = config.gainWhereString(true);
 
 		//根据方法不同，聚合语句不同。GROUP  BY 和 HAVING 可以加在 HEAD 上, HAVING 可以加在 PUT, DELETE 上，GET 全加，POST 全都不加
+		RequestMethod method = config.getMethod();
 		String aggregation;
-		if (RequestMethod.isGetMethod(config.getMethod(), true)) {
+		if (RequestMethod.isGetMethod(method, true)) {
 			aggregation = config.gainGroupString(true) + config.gainHavingString(true)
 					+ config.gainSampleString(true) + config.gainLatestString(true)
 					+ config.gainPartitionString(true) + config.gainFillString(true)
 					+ config.gainOrderString(true);
 		}
-		else if (RequestMethod.isHeadMethod(config.getMethod(), true)) {
-			// TODO 加参数 isPagenation 判断是 GET 内分页 query:2 查总数，不用加这些条件
+		else if (RequestMethod.isHeadMethod(method, true)) {
+			// TODO 加参数 isPagination 判断是 GET 内分页 query:2 查总数，不用加这些条件
 			aggregation = config.gainGroupString(true) + config.gainHavingString(true)
 					+ config.gainSampleString(true) + config.gainLatestString(true)
 					+ config.gainPartitionString(true) + config.gainFillString(true);
 		}
-		else if (config.getMethod() == PUT || config.getMethod() == DELETE) {
+		else if (method == PUT || method == DELETE) {
 			aggregation = config.gainHavingString(true) ;
 		}
 		else {
