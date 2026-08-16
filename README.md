@@ -318,6 +318,14 @@ https://search.gitee.com/?skin=rec&type=repository&q=apijson&sort=stars_count <b
 <br />
 <img width="816" height="182" alt="Screenshot 2026-04-18 at 05 29 36" src="https://github.com/user-attachments/assets/5bd53109-88e6-40b5-b343-7e653992f80d" />
 
+[Tencent Security](https://security.tencent.com), [Ant Group Sourcebrella](https://www.sourcebrella.com), [QAX CodeSafe](https://github.com/QiAnXinCodeSafe) submitted security reports(Issue)
+<div style="float:left">
+  <a href="https://security.tencent.com" style="padding: 5px"><img width="285" height="100" alt="image" src="https://github.com/user-attachments/assets/e49859d6-3e98-452d-a2e0-876264c1f722" /></a>
+  <a href="https://www.sourcebrella.com" style="padding: 5px"><img src="https://github.com/user-attachments/assets/2d580664-9df9-4275-8346-5ba2d04936b9" height="90" ></a>
+  <a href="https://github.com/QiAnXinCodeSafe" style="margin-right: 20px"><img src="https://avatars.githubusercontent.com/u/39950310?s=460&u=8c4ad8c2174ba78c0604614a6e2feced07521ce6&v=4"  height="90" ></a>
+</div>
+<br />
+
 Thanks to all contributers of APIJSON!
 
 <br />
